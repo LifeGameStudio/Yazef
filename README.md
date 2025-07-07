@@ -11,13 +11,9 @@
 
 This project is a fork of [Zenject](https://github.com/modesttree/zenject) / [Extenject](https://github.com/Mathijs-Bakker/Extenject) with the goal of being simpler and more lightweight
 
-## 2024 Update
+This means a number of features of Zenject have been removed.  If you have previously been using other Zenject versions then you will want to review these changes [here](#yazef-vs-zenject).
 
-I am the original author of Zenject
-
-This is a slightly stripped down version, which means a number of features of Zenject have been removed, in an effort to make it simpler, less bloated, and more maintainable.  If you have previously been using other Zenject versions then you will want to review these changes [here](#yazef-vs-zenject).
-
-Also - note that this library is not as performant as [VContainer](https://github.com/hadashiA/VContainer) or [Reflex](https://github.com/gustavopsantos/Reflex) so you porbably want to use one of those instead.
+Also - note that this library is not as performant as [VContainer](https://github.com/hadashiA/VContainer) or [Reflex](https://github.com/gustavopsantos/Reflex) so you probably want to use one of those instead.
 
 ## Table Of Contents
 
