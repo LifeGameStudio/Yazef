@@ -36,7 +36,6 @@ namespace Zenject
         [SerializeField]
         ConstructorChoiceStrategy _constructorChoiceStrategy;
 
-        [SerializeField]
         public ZenjectSettings(
             ValidationErrorResponses validationErrorResponse,
             RootResolveMethods validationRootResolveMethod = RootResolveMethods.NonLazyOnly,
