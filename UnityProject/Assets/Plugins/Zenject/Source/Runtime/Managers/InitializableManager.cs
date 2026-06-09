@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Zenject.Internal;
 
 namespace Zenject
@@ -9,7 +10,7 @@ namespace Zenject
     // - Run Initialize() on all Iinitializable's, in the order specified by InitPriority
     public class InitializableManager
     {
-        List<InitializableInfo> _initializables;
+        protected List<InitializableInfo> _initializables;
 
         protected bool _hasInitialized;
 
@@ -28,10 +29,17 @@ namespace Zenject
 
                 // Note that we use zero for unspecified priority
                 // This is nice because you can use negative or positive for before/after unspecified
-                var matches = priorities.Where(x => initializable.GetType().DerivesFromOrEqual(x.First)).Select(x => x.Second).ToList();
-                int priority = matches.IsEmpty() ? 0 : matches.Distinct().Single();
+                var matches = priorities
+                    .Where(x => initializable.GetType().DerivesFromOrEqual(x.First))
+                    .Select(x => x.Second)
+                    .ToList();
 
-                _initializables.Add(new InitializableInfo(initializable, priority));
+                int priority = matches.IsEmpty()
+                    ? 0
+                    : matches.Distinct().Single();
+
+                _initializables.Add(
+                    new InitializableInfo(initializable, priority));
             }
         }
 
@@ -43,21 +51,29 @@ namespace Zenject
         public void Add(IInitializable initializable, int priority)
         {
             Assert.That(!_hasInitialized);
+
             _initializables.Add(
                 new InitializableInfo(initializable, priority));
         }
 
-        public void Initialize()
+        public virtual async void Initialize()
         {
             Assert.That(!_hasInitialized);
             _hasInitialized = true;
 
-            _initializables = _initializables.OrderBy(x => x.Priority).ToList();
+            _initializables = _initializables
+                .OrderBy(x => x.Priority)
+                .ToList();
 
 #if UNITY_EDITOR
-            foreach (var initializable in _initializables.Select(x => x.Initializable).GetDuplicates())
+            foreach (var initializable in _initializables
+                         .Select(x => x.Initializable)
+                         .GetDuplicates())
             {
-                Assert.That(false, "Found duplicate IInitializable with type '{0}'".Fmt(initializable.GetType()));
+                Assert.That(
+                    false,
+                    "Found duplicate IInitializable with type '{0}'"
+                        .Fmt(initializable.GetType()));
             }
 #endif
 
@@ -69,7 +85,9 @@ namespace Zenject
                     using (ProfileTimers.CreateTimedBlock("User Code"))
 #endif
 #if UNITY_EDITOR
-                    using (ProfileBlock.Start("{0}.Initialize()", initializable.Initializable.GetType()))
+                    using (ProfileBlock.Start(
+                               "{0}.Initialize()",
+                               initializable.Initializable.GetType()))
 #endif
                     {
                         initializable.Initializable.Initialize();
@@ -78,17 +96,23 @@ namespace Zenject
                 catch (Exception e)
                 {
                     throw Assert.CreateException(
-                        e, "Error occurred while initializing IInitializable with type '{0}'", initializable.Initializable.GetType());
+                        e,
+                        "Error occurred while initializing IInitializable with type '{0}'",
+                        initializable.Initializable.GetType());
                 }
+
+                await Task.Delay(1);
             }
         }
 
-        class InitializableInfo
+        public class InitializableInfo
         {
             public IInitializable Initializable;
             public int Priority;
 
-            public InitializableInfo(IInitializable initializable, int priority)
+            public InitializableInfo(
+                IInitializable initializable,
+                int priority)
             {
                 Initializable = initializable;
                 Priority = priority;
