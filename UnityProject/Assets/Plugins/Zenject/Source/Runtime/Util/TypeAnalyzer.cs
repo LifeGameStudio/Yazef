@@ -1,13 +1,22 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using System.Runtime.CompilerServices;
-using Zenject.Internal;
-
 namespace Zenject
 {
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Reflection;
+    using System.Runtime.CompilerServices;
+    using UnityEditor;
+    using UnityEngine;
+    using Zenject.Internal;
+
     public delegate InjectTypeInfo ZenTypeInfoGetter();
+
+    public enum ReflectionBakingCoverageModes
+    {
+        FallbackToDirectReflection,
+        NoCheckAssumeFullCoverage,
+        FallbackToDirectReflectionWithWarning
+    }
 
     public static class TypeAnalyzer
     {
@@ -18,25 +27,32 @@ namespace Zenject
         // we want to minimize the types that generate InjectTypeInfo for
         static Dictionary<Type, bool> _allowDuringValidation = new Dictionary<Type, bool>();
 
+        // Use double underscores for generated methods since this is also what the C# compiler does
+        // for things like anonymous methods
+        public const string ReflectionBakingGetInjectInfoMethodName = "__zenCreateInjectTypeInfo";
+        public const string ReflectionBakingFactoryMethodName       = "__zenCreate";
+        public const string ReflectionBakingInjectMethodPrefix      = "__zenInjectMethod";
+        public const string ReflectionBakingFieldSetterPrefix       = "__zenFieldSetter";
+        public const string ReflectionBakingPropertySetterPrefix    = "__zenPropertySetter";
+
 #if UNITY_EDITOR
         // Required for disabling domain reload in enter the play mode feature. See: https://docs.unity3d.com/Manual/DomainReloading.html
-        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void ResetStaticValues()
         {
-            if (!UnityEditor.EditorSettings.enterPlayModeOptionsEnabled)
+            if (!EditorSettings.enterPlayModeOptionsEnabled)
             {
                 return;
             }
-            
+
             _typeInfo.Clear();
             _allowDuringValidation.Clear();
         }
 #endif
 
-        public static bool ShouldAllowDuringValidation<T>()
-        {
-            return ShouldAllowDuringValidation(typeof(T));
-        }
+        public static ReflectionBakingCoverageModes ReflectionBakingCoverageMode { get; set; }
+
+        public static bool ShouldAllowDuringValidation<T>() { return ShouldAllowDuringValidation(typeof(T)); }
 
         public static bool ShouldAllowDuringValidation(Type type)
         {
@@ -63,10 +79,12 @@ namespace Zenject
                 return true;
             }
 
+#if !NOT_UNITY3D
             if (type.DerivesFrom<Context>())
             {
                 return true;
             }
+#endif
 
 #if UNITY_WSA && ENABLE_DOTNET && !UNITY_EDITOR
             return type.GetTypeInfo().GetCustomAttribute<ZenjectAllowDuringValidationAttribute>() != null;
@@ -75,32 +93,21 @@ namespace Zenject
 #endif
         }
 
-        public static bool HasInfo<T>()
-        {
-            return HasInfo(typeof(T));
-        }
+        public static bool HasInfo<T>() { return HasInfo(typeof(T)); }
 
-        public static bool HasInfo(Type type)
-        {
-            return TryGetInfo(type) != null;
-        }
+        public static bool HasInfo(Type type) { return TryGetInfo(type) != null; }
 
-        public static InjectTypeInfo GetInfo<T>()
-        {
-            return GetInfo(typeof(T));
-        }
+        public static InjectTypeInfo GetInfo<T>() { return GetInfo(typeof(T)); }
 
         public static InjectTypeInfo GetInfo(Type type)
         {
             var info = TryGetInfo(type);
             Assert.IsNotNull(info, "Unable to get type info for type '{0}'", type);
+
             return info;
         }
 
-        public static InjectTypeInfo TryGetInfo<T>()
-        {
-            return TryGetInfo(typeof(T));
-        }
+        public static InjectTypeInfo TryGetInfo<T>() { return TryGetInfo(typeof(T)); }
 
         public static InjectTypeInfo TryGetInfo(Type type)
         {
@@ -162,9 +169,49 @@ namespace Zenject
 #endif
 
 #if ZEN_INTERNAL_PROFILING
+            using (ProfileTimers.CreateTimedBlock("Type Analysis - Calling Baked Reflection Getter"))
+#endif
+            {
+                var getInfoMethod = type.GetMethod(
+                    ReflectionBakingGetInjectInfoMethodName,
+                    BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+
+                if (getInfoMethod != null)
+                {
+                    Debug.Log($"BAKED: {type.Assembly.GetName().Name} :: {type.FullName}");
+#if UNITY_WSA && ENABLE_DOTNET && !UNITY_EDITOR
+                    var infoGetter = (ZenTypeInfoGetter)getInfoMethod.CreateDelegate(
+                        typeof(ZenTypeInfoGetter), null);
+#else
+                    var infoGetter = ((ZenTypeInfoGetter)Delegate.CreateDelegate(
+                        typeof(ZenTypeInfoGetter), getInfoMethod));
+#endif
+
+                    return infoGetter();
+                }
+            }
+
+            if (ReflectionBakingCoverageMode == ReflectionBakingCoverageModes.NoCheckAssumeFullCoverage)
+            {
+                // If we are confident that the reflection baking supplies all the injection information,
+                // then we can avoid the costs of doing reflection on types that were not covered
+                // by the baking
+                return null;
+            }
+
+#if !(UNITY_WSA && ENABLE_DOTNET) || UNITY_EDITOR
+            if (ReflectionBakingCoverageMode == ReflectionBakingCoverageModes.FallbackToDirectReflectionWithWarning)
+            {
+                Log.Warn("No reflection baking information found for type '{0}' - using more costly direct reflection instead", type);
+            }
+#endif
+
+#if ZEN_INTERNAL_PROFILING
             using (ProfileTimers.CreateTimedBlock("Type Analysis - Direct Reflection"))
 #endif
             {
+                Debug.LogWarning(
+                    $"DIRECT REFLECTION: {type.Assembly.GetName().Name} :: {type.FullName}");
                 return CreateTypeInfoFromReflection(type);
             }
         }
@@ -173,9 +220,7 @@ namespace Zenject
         {
             return type == null || type.IsEnum() || type.IsArray || type.IsInterface()
                    || type.ContainsGenericParameters() || IsStaticType(type)
-                   || type == typeof(object)
-                   || (type.Namespace != null && type.Namespace.Contains("UnityEngine"))
-                ;
+                   || type == typeof(object);
         }
 
         static bool IsStaticType(Type type)
@@ -194,10 +239,8 @@ namespace Zenject
             var injectMethods = reflectionInfo.InjectMethods.Select(
                 ReflectionInfoTypeInfoConverter.ConvertMethod).ToArray();
 
-            var memberInfos = reflectionInfo.InjectFields.Select(
-                x => ReflectionInfoTypeInfoConverter.ConvertField(type, x)).Concat(
-                    reflectionInfo.InjectProperties.Select(
-                        x => ReflectionInfoTypeInfoConverter.ConvertProperty(type, x))).ToArray();
+            var memberInfos = reflectionInfo.InjectFields.Select(x => ReflectionInfoTypeInfoConverter.ConvertField(type, x)).Concat(
+                reflectionInfo.InjectProperties.Select(x => ReflectionInfoTypeInfoConverter.ConvertProperty(type, x))).ToArray();
 
             return new InjectTypeInfo(
                 type, injectConstructor, injectMethods, memberInfos);
